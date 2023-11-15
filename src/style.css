@@ -36,7 +36,13 @@ h1 {
   font-size: 3.2em;
   line-height: 1.1;
 }
+#cellCoords {
+  color: rgb(255, 0, 234);
+}
 
+#numCoins {
+  color: purple
+}
 #controlPanel {
   padding: 1rem;
 }
@@ -49,6 +55,31 @@ h1 {
   padding: 1rem;
 }
 
+.leaflet-popup-content-wrapper {
+  background-color: rgb(190, 135, 190);
+  border-radius: 20px;
+}
+
+
+#pop-up-container {
+  display: flex;
+  flex-direction: column;
+  margin: 1px;
+  background-color: rgb(190, 135, 190);
+  padding: 10px;
+  border-radius: 20px;
+}
+
+#pop-up-container button {
+  background-color: blueviolet;
+  margin: 2px;
+}
+
+#button-container {
+  height: 150px;
+  overflow-y: auto;
+  margin: 10px;
+}
 #map {
   display: flex;
   justify-content: center;
@@ -57,7 +88,7 @@ h1 {
   height: 80vh;
 }
 #messages {
-  color: rgb(255, 0, 212);
+  color: rgb(129, 28, 112);
   justify-self: center;
   max-width: 80%;
   font-size: 1rem;
