@@ -1,6 +1,6 @@
 import "leaflet/dist/leaflet.css";
 import "./style.css";
-import leaflet from "leaflet";
+import leaflet, { LatLng } from "leaflet";
 import luck from "./luck";
 import "./leafletWorkaround";
 import { Cell, Board } from "./board";
@@ -25,10 +25,6 @@ const mapContainer = document.querySelector<HTMLElement>("#map")!;
 const board = new Board(TILE_DEGREES, NEIGHBORHOOD_SIZE);
 
 let currentBins: leaflet.Rectangle[] = [];
-const playerCoins: Coin[] = [];
-const playerPos = leaflet.latLng(MERRILL_CLASSROOM);
-let playerMarker = leaflet.marker(playerPos);
-const momentos = new Map<Cell, string>();
 
 const map = leaflet.map(mapContainer, {
   center: NULL_ISLAND,
@@ -59,36 +55,52 @@ leaflet
   )
   .addTo(map);
 
+leaflet
+  .tileLayer(
+    "https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png",
+    {
+      attribution:
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+      maxZoom: 20,
+    }
+  )
+  .addTo(map);
+
 const sensorButton = document.querySelector("#sensor")!;
 sensorButton.addEventListener("click", () => {
-  updatePosition()
-    .then(() => {
-      playerMarker.setLatLng(leaflet.latLng(playerPos.lat, playerPos.lng));
-      updateMap();
-      map.setZoom(MAX_ZOOM);
-    })
-    .catch(() => {
-      console.error();
-    });
+  drawLivePosition();
+});
+sensorButton.addEventListener("touchstart", (e) => {
+  e.preventDefault();
+  drawLivePosition();
 });
 
 let buttonisDown: "north" | "south" | "west" | "east" | null = null;
 const northButton = document.querySelector("#north")!;
-northButton.addEventListener("mousedown", () => {
+northButton.addEventListener("mousedown", () => (buttonisDown = "north"));
+northButton.addEventListener("touchstart", (e) => {
+  e.preventDefault();
   buttonisDown = "north";
 });
 const southButton = document.querySelector("#south")!;
-southButton.addEventListener("mousedown", () => {
+southButton.addEventListener("mousedown", () => (buttonisDown = "south"));
+southButton.addEventListener("touchstart", (e) => {
+  e.preventDefault();
   buttonisDown = "south";
 });
 const westButton = document.querySelector("#west")!;
-westButton.addEventListener("mousedown", () => {
+westButton.addEventListener("mousedown", () => (buttonisDown = "west"));
+westButton.addEventListener("touchstart", (e) => {
+  e.preventDefault();
   buttonisDown = "west";
 });
 const eastButton = document.querySelector("#east")!;
-eastButton.addEventListener("mousedown", () => {
+eastButton.addEventListener("mousedown", () => (buttonisDown = "east"));
+eastButton.addEventListener("touchstart", (e) => {
+  e.preventDefault();
   buttonisDown = "east";
 });
+document.addEventListener("touchend", () => (buttonisDown = null));
 document.addEventListener("mouseup", () => {
   buttonisDown = null;
 });
@@ -96,11 +108,18 @@ document.addEventListener("mouseleave", () => {
   buttonisDown = null;
 });
 
+const resetButton = document.querySelector("#reset")!;
+
+//modify this later to prompt user if they are sure
+resetButton.addEventListener("click", () => {
+  resetMap();
+  updateMap();
+});
 const statusPanel = document.querySelector<HTMLDivElement>("#statusPanel")!;
 
 const pointsDisplay: HTMLDivElement = document.createElement("div");
 pointsDisplay.id = "pointsDisplay";
-pointsDisplay.innerHTML = "No points yet...";
+pointsDisplay.innerText = "No points yet...";
 const messages: HTMLDivElement = document.createElement("div");
 messages.id = "messages";
 statusPanel.append(pointsDisplay, messages);
@@ -119,6 +138,38 @@ function updatePosition(): Promise<string> {
     );
   });
 }
+
+function drawLivePosition() {
+  updatePosition()
+    .then(() => {
+      // create new empty polyline
+      playerPaths.push([]);
+      const currentPath = playerPaths[playerPaths.length - 1];
+      currentPolyline = leaflet
+        .polyline(currentPath, {
+          color: "red",
+        })
+        .addTo(map);
+      polylines.push(currentPolyline);
+
+      updateMap();
+      map.setZoom(MAX_ZOOM);
+    })
+    .catch(() => {
+      console.error();
+    });
+}
+
+function addPointToPlayerPath(pos: leaflet.LatLng) {
+  // add point to player path
+  playerPaths[playerPaths.length - 1].push(leaflet.latLng(pos.lat, pos.lng));
+  currentPolyline.addLatLng(leaflet.latLng(pos.lat, pos.lng));
+
+  // save playerPos and playerPaths to local storage
+  localStorage.setItem("playerPos", JSON.stringify(playerPos));
+  localStorage.setItem("playerPaths", JSON.stringify(playerPaths));
+}
+
 function updatePlayerMarker() {
   playerMarker.remove();
   playerMarker = leaflet.marker(playerPos);
@@ -126,42 +177,98 @@ function updatePlayerMarker() {
   playerMarker.addTo(map);
 }
 
-function updateMap() {
-  updatePlayerMarker();
-  map.setView(playerMarker.getLatLng());
+function refreshBins(point: leaflet.LatLng) {
   currentBins.forEach((bin) => {
     bin.remove();
   });
   currentBins = [];
-  spawnBinsAroundPoint(playerPos);
+  const nearbyCells = board.getCellsNearPoint(point);
+  nearbyCells.forEach((cell) => {
+    if (luck([cell.i, cell.j].toString()) < BIN_SPAWN_PROBABILITY) {
+      makeBin(cell);
+    }
+  });
 }
 
-function makeBin(cell: Cell) {
-  const geocache: Geocache = new Geocache(cell);
+function updateMap() {
+  addPointToPlayerPath(playerPos);
+  updatePlayerMarker();
+  map.setView(playerMarker.getLatLng());
+  refreshBins(playerPos); // respawn bins around player
+}
 
-  if (momentos.has(cell)) {
-    geocache.fromMomento(momentos.get(cell)!);
-  }
+function resetMap() {
+  if (!window.confirm("Are you sure you want to erase all progress?")) return; //confirm with user before reset
+  localStorage.clear();
 
-  const bin = leaflet.rectangle(board.getCellBounds(cell), { opacity: 1 });
-  currentBins.push(bin);
+  // not using MERILL_CLASSROOM here to avoid bug of playerPos not being set to correct coords
+  playerPos = leaflet.latLng({
+    lat: 36.9995,
+    lng: -122.0533,
+  });
 
-  function updateBinColor() {
-    const minMid = 10;
-    const maxMid = 30;
-    const numCoins = geocache.getNumCoins();
-    if (numCoins <= 0) bin.setStyle({ color: "grey" });
-    if (numCoins > 0 && numCoins < minMid) bin.setStyle({ color: "red" });
-    if (numCoins >= minMid && numCoins < maxMid)
-      bin.setStyle({ color: "yellow" });
-    if (numCoins >= maxMid) bin.setStyle({ color: "blue" });
+  polylines.forEach((line) => line.remove());
+  playerPaths = [[]];
+  currentPolyline = leaflet.polyline(playerPaths, { color: "red" }).addTo(map);
+  polylines = [currentPolyline];
 
-    bin.setTooltipContent(`${numCoins} coins`);
-  }
+  pointsDisplay.innerText = "No points yet...";
+  messages.innerText = "";
+  playerCoins = [];
+  momentos.clear();
+  console.log(playerPaths);
+  console.log(polylines);
+}
 
-  updateBinColor();
+function updateBinColor(bin: leaflet.Rectangle, geocache: Geocache) {
+  const minMid = 5;
+  const maxMid = 10;
+  const numCoins = geocache.getNumCoins();
+  if (numCoins <= 0) bin.setStyle({ color: "red" });
+  if (numCoins > 0 && numCoins < minMid) bin.setStyle({ color: "blue" });
+  if (numCoins >= minMid && numCoins < maxMid) bin.setStyle({ color: "lime" });
+  if (numCoins >= maxMid) bin.setStyle({ color: "cyan" });
 
-  bin.bindPopup(() => {
+  bin.setTooltipContent(`${numCoins} coins`);
+}
+
+function updateUI(container: HTMLDivElement, cell: Cell, geocache: Geocache) {
+  container.querySelector<HTMLSpanElement>("#numCoins")!.innerText = `${geocache
+    .getNumCoins()
+    .toString()} coins`;
+  pointsDisplay.innerText = `${playerCoins.length} points accumulated`;
+
+  momentos.set(cell, geocache.toMomento());
+
+  localStorage.setItem("momentos", JSON.stringify(Array.from(momentos)));
+  // save player coins to local storage
+  localStorage.setItem("playerCoins", JSON.stringify(playerCoins));
+}
+
+function createButton(
+  coinName: string,
+  container: HTMLDivElement,
+  cell: Cell,
+  bin: leaflet.Rectangle,
+  geocache: Geocache
+) {
+  const button = document.createElement("button");
+  button.innerText = coinName;
+  button.addEventListener("click", () => {
+    const popped = geocache.removeCoin(coinName);
+    if (popped !== undefined) {
+      playerCoins.push(popped);
+      messages.innerText = `Collected coin: ${popped.toString()}`;
+      button.hidden = true;
+      updateUI(container, cell, geocache);
+      updateBinColor(bin, geocache);
+    }
+  });
+  return button;
+}
+
+function createPopUp(cell: Cell, bin: leaflet.Rectangle, geocache: Geocache) {
+  {
     const container = document.createElement("div");
     container.id = "pop-up-container";
 
@@ -171,65 +278,62 @@ function makeBin(cell: Cell) {
       cell.j
     }</span> contains <span id="numCoins">${geocache.getNumCoins()} coins</span>`;
 
+    const buttonsContainer = document.createElement("div");
+    buttonsContainer.id = "button-container";
+
     const depositButton = document.createElement("button");
     depositButton.id = "deposit-button";
     depositButton.innerText = "Deposit";
-    const buttons = document.createElement("div");
-    buttons.id = "button-container";
-
-    function updateUI() {
-      container.querySelector<HTMLSpanElement>(
-        "#numCoins"
-      )!.innerText = `${geocache.getNumCoins().toString()} coins`;
-      pointsDisplay.innerText = `${playerCoins.length} points accumulated`;
-
-      updateBinColor();
-      momentos.set(cell, geocache.toMomento()); //cache new bin state
-    }
-    function createButton(coinName: string) {
-      const button = document.createElement("button");
-      button.innerText = coinName;
-      button.addEventListener("click", () => {
-        const popped = geocache.removeCoin(coinName);
-        if (popped !== undefined) {
-          playerCoins.push(popped);
-          messages.innerText = `Collected coin: ${popped.toString()}`;
-          button.hidden = true;
-          updateUI();
-        }
-      });
-      return button;
-    }
-    // create button for each coin
-    geocache.getCoinNames().forEach((coinName) => {
-      const button = createButton(coinName);
-      buttons.append(button);
-    });
 
     depositButton.addEventListener("click", () => {
       const popped = playerCoins.pop();
       if (popped !== undefined) {
         geocache.addCoin(popped);
         messages.innerText = `Deposited coin: ${popped.toString()}`;
-        const button = createButton(popped.toString());
-        buttons.append(button);
+        const button = createButton(
+          popped.toString(),
+          container,
+          cell,
+          bin,
+          geocache
+        );
+        buttonsContainer.prepend(button);
       }
-      updateUI();
+      updateUI(container, cell, geocache);
+      updateBinColor(bin, geocache);
     });
-    container.append(title, depositButton, buttons);
-    return container;
-  });
 
-  bin.addTo(map);
+    // create button for each coin
+    geocache
+      .getCoinNames()
+      .reverse()
+      .forEach((coinName) => {
+        const button = createButton(coinName, container, cell, bin, geocache);
+        buttonsContainer.append(button);
+      });
+    container.append(title, depositButton, buttonsContainer);
+    return container;
+  }
 }
 
-function spawnBinsAroundPoint(point: leaflet.LatLng) {
-  const nearbyCells = board.getCellsNearPoint(point);
-  nearbyCells.forEach((cell) => {
-    if (luck([cell.i, cell.j].toString()) < BIN_SPAWN_PROBABILITY) {
-      makeBin(cell);
-    }
-  });
+function makeBin(cell: Cell) {
+  const geocache: Geocache = new Geocache(cell, board);
+
+  // recover state of geocache if its been cached
+  if (momentos.has(cell)) {
+    geocache.fromMomento(momentos.get(cell)!);
+  }
+
+  // create a virtual bin using leaflet rectangle
+  const bin = leaflet.rectangle(board.getCellBounds(cell), { opacity: 1 });
+  currentBins.push(bin);
+
+  updateBinColor(bin, geocache);
+
+  // pop up for user to interact with the bin
+  bin.bindPopup(() => createPopUp(cell, bin, geocache));
+
+  bin.addTo(map);
 }
 
 function update() {
@@ -256,5 +360,65 @@ function update() {
   }
   requestAnimationFrame(update);
 }
-updateMap();
+
+console.log("start MERILL: ", MERRILL_CLASSROOM);
+
+const momentos = new Map<Cell, string>();
+const dataString = localStorage.getItem("momentos");
+if (dataString != null) {
+  const serializedMomentos = JSON.parse(localStorage.getItem("momentos")!) as [
+    Cell,
+    string
+  ][];
+  serializedMomentos.forEach((pair: [Cell, string]) => {
+    momentos.set(board.getCanonicalCell(pair[0]), pair[1]);
+  });
+}
+
+let playerCoins: Coin[] = [];
+let playerPos: leaflet.LatLng;
+
+let playerPaths: leaflet.LatLng[][] = [[]];
+let polylines: leaflet.Polyline[] = [];
+let currentPolyline: leaflet.Polyline;
+
+//recover player state from localstorage if available
+const cachedPlayerCoins = localStorage.getItem("playerCoins");
+const cachedPlayerPos = localStorage.getItem("playerPos");
+const cachedplayerPaths = localStorage.getItem("playerPaths");
+if (cachedPlayerCoins != null) {
+  const parsedCoins = JSON.parse(cachedPlayerCoins) as Coin[];
+  playerCoins = parsedCoins.map(
+    (coinData) => new Coin(coinData.cell, coinData.serial)
+  );
+  pointsDisplay.innerText = `${playerCoins.length} points accumulated`;
+}
+if (cachedPlayerPos != null) {
+  playerPos = JSON.parse(cachedPlayerPos) as LatLng;
+} else {
+  playerPos = leaflet.latLng(MERRILL_CLASSROOM);
+}
+if (cachedplayerPaths != null) {
+  playerPaths = JSON.parse(cachedplayerPaths) as LatLng[][];
+} else {
+  playerPaths = [[leaflet.latLng({ lat: 36.9995, lng: -122.0533 })]];
+}
+
+playerPaths.forEach((path) => {
+  polylines.push(
+    leaflet
+      .polyline(path, {
+        color: "red",
+      })
+      .addTo(map)
+  );
+});
+currentPolyline = polylines[polylines.length - 1];
+
+let playerMarker = leaflet.marker(playerPos);
+
+updatePlayerMarker();
+map.setView(playerMarker.getLatLng());
+refreshBins(playerPos);
+
 update();
